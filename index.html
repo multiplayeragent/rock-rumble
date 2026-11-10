@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rock Rumble</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #05060f; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #e8ecff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; cursor: crosshair; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 4px #000; }
+  #score { top: max(12px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); font: 800 28px/1.05 ui-monospace, "Cascadia Mono", Menlo, monospace; letter-spacing: .04em; }
+  #score small { display: flex; gap: 6px; margin-top: 6px; font: 700 12px system-ui, sans-serif; opacity: .8; align-items: center; }
+  #score i { width: 12px; height: 14px; background: currentColor; clip-path: polygon(50% 0, 100% 100%, 50% 78%, 0 100%); }
+  #top { top: max(12px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); width: 170px; font-size: 13px; }
+  #top div { display: flex; align-items: center; gap: 8px; } #top i { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; }
+  #top span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } #top b { font-variant-numeric: tabular-nums; } #top .me { color: #ffe066; font-weight: 800; }
+  #feed { top: calc(max(12px, env(safe-area-inset-top)) + 110px); right: max(14px, env(safe-area-inset-right)); font-size: 12px; font-weight: 700; text-align: right; }
+  #feed div { margin-top: 3px; }
+  #msg { top: 34%; left: 0; right: 0; text-align: center; font: 800 30px system-ui, sans-serif; }
+  #msg small { display: block; font-size: 15px; font-weight: 600; opacity: .8; }
+  #hint { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 26px); left: 0; right: 0; padding: 0 16px; text-align: center; font-size: 14px; font-weight: 600; opacity: .9; transition: opacity .8s; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: max(14px, env(safe-area-inset-left)); font-size: 12px; opacity: .65; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #05060fb0; }
+  #over[hidden], .stick[hidden], #fire[hidden] { display: none; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 84vh; overflow: auto; padding: 22px; border-radius: 16px; background: #10142a; border: 1px solid #ffffff26; text-align: center; box-shadow: 0 0 40px #5be7ff22; }
+  .card h2 { margin: 0 0 4px; font-size: 26px; letter-spacing: .04em; }
+  .card h3 { margin: 16px 0 4px; font-size: 12px; color: #5be7ff; text-transform: uppercase; letter-spacing: .08em; text-align: left; }
+  .card ol { text-align: left; margin: 0 0 16px; padding-left: 26px; font-size: 14px; min-height: 40px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #5be7ff; color: #041018; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  .stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; border: 2px solid #ffffff44; background: #ffffff10; pointer-events: none; }
+  .stick i { position: absolute; left: 34px; top: 34px; width: 52px; height: 52px; border-radius: 50%; background: #ffffff55; }
+  #fire { position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px)); width: 92px; height: 92px; border-radius: 50%;
+          border: 2px solid #ff6b8b88; background: #ff6b8b22; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
+  #fire.on { background: #ff6b8b66; }
+  .touch #hint { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 140px); }
+  @media (max-width: 640px) { #top { width: 128px; font-size: 12px; } #score { font-size: 22px; } }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud" id="score"></div>
+<div class="hud" id="top"></div>
+<div class="hud" id="feed"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="stick" id="stick" hidden><i></i></div>
+<button id="fire" hidden>FIRE</button>
+<div id="over" hidden>
+  <div class="card">
+    <h2>Game over</h2>
+    <div id="overScore"></div>
+    <h3>High scores, all time</h3>
+    <ol id="board"><li>Loading the leaderboard…</li></ol>
+    <button class="go" id="again">Play again</button>
+  </div>
+</div>
+<script>
+/* ═══ ROCK RUMBLE · a Multiplayer Agent starter ═══════════════════════════════════════
+ * Asteroids, everyone at once: blast rocks and each other. Drop-in, 2–12 players; bots
+ * fill empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ every number worth tuning: field, ship handling, rocks, scores, bots
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   FIELD ......... the wraparound field: wrapped distances, safe spawn spots
+ *   SHIPS ......... thrust, turn, drag and firing (shared by players and bots)
+ *   BULLETS ....... bullets every screen flies, and who decides a hit
+ *   ROCKS (HOST) .. rocks drifting, splitting and coming in. Only the host writes them.
+ *   BOTS (HOST) ... the bot ships and their brain
+ *   ME ............ flying, shooting, crashing, lives and score. Each player writes its own.
+ *   OTHERS ........ everyone else's ships and the rocks, eased between snapshots
+ *   DRAW .......... camera, stars, rocks, ships, bullets, effects, radar
+ *   HUD & OVER .... score, lives, top 5, feed, game-over card, leaderboard, sound
+ *   INPUT ......... keys, mouse, a thumb stick and a FIRE button on touch
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `s` (one packed JSON field: position, velocity,
+ *     heading, thrusting, dead, shield, score, lives) about 12 times a second, `hb` (heartbeat)
+ *     once a second, and `n`/`c` (name, color) once. Score and lives are your own.
+ *   - Shots are events: "shot" {x, y, vx, vy}. Every screen flies every bullet the same way.
+ *   - A HIT ON A SHIP IS THE VICTIM'S OWN FACT: only you check bullets and rocks against your
+ *     ship. When you go down you send "down" {v: you, by: shooter or "", why}; a shooter adds
+ *     the points. Crashing into a rock also sends "ram" {id, x, y} so the host breaks that rock.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `rocks` ([id, size, x, y,
+ *     vx, vy] each; others carry them forward along their velocity) and `bots`. The host
+ *     decides which bullets break rocks and sends "pts" {to, n} to the player who broke one.
+ *     A new host adopts both fields and carries on.
+ *   - Bot shots go out batched, 10 times a second: "shots" {list: [[bot, x, y, vx, vy]…]}.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "high-score": each player's best score in one run (three ships).
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  w: 2400, h: 1600,     // the field (it wraps around at every edge)
+  seats: 6,             // bots fill the field up to this many ships
+  lives: 3,             // ships per run; lose them all and the run is over
+  rockLoad: 24,         // how full the host keeps the field: a big rock counts 3, a medium 2, a small 1 (a big one comes in when it's low)
+  maxRocks: 56,         // never more than this many (they share one field)
+  turn: 4.4,            // rad/s
+  thrust: 460,          // px/s² while thrusting
+  maxSpeed: 500,        // px/s
+  drag: 0.55,           // how fast a coasting ship slows down (per second)
+  fireEvery: 0.2,       // seconds between shots
+  bulletSpeed: 720,     // px/s on top of the ship's own speed
+  bulletLife: 1.05,     // seconds before a bullet fizzles
+  respawnMs: 2000,      // ms before your next ship
+  shieldMs: 2500,       // ms nothing can hurt a fresh ship
+  rockSpeed: [35, 95],  // px/s for a big rock (smaller ones fly faster)
+  points: [0, 100, 50, 20], // score for breaking a small (1), medium (2) or big (3) rock
+  shipPoints: 200,      // score for downing a ship
+  botAim: 0.1,          // radians a bot's aim wanders
+  botFireEvery: 0.38,   // seconds between a bot's shots
+  graceMs: 6000,        // ms after a ship appears before bots will hunt it
+  botRange: 650,        // px: bots pick fights this close
+  botAggr: [0.25, 0.7], // how keen each bot is to hunt ships instead of rocks (0..1)
+  board: "high-score",  // leaderboard name
+};
+const ROCK_R = [0, 15, 30, 54]; // rock radius by size
+const SHIP_R = 13;
+const BOT_NAMES = ["Comet", "Nova", "Orbit", "Quasar", "Zenith", "Pulsar", "Nebula", "Ion", "Vega", "Rigel"];
+const COLORS = ["#5be7ff", "#ff6b8b", "#ffe066", "#7dff8a", "#c77dff", "#ff9f43", "#4d96ff", "#f15bb5", "#9ef01a", "#ffffff"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'rock-rumble',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+if (ATTRACT) Object.assign(CONFIG, { w: 950, h: 600, seats: 7, rockLoad: 17, respawnMs: 900, shieldMs: 500, botAggr: [0.5, 0.9], botFireEvery: 0.24, botRange: 800 });
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const parsed = new Map();
+/** A JSON value from state, parsed once per change (read-only: never mutate what this returns). */
+function parseOnce(key, raw, fallback) {
+  const c = parsed.get(key);
+  if (c && c.raw === raw) return c.v;
+  const v = parse(raw, fallback); parsed.set(key, { raw, v }); return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+
+// ── FIELD ───────────────────────────────────────────────────────────────────────────
+const FW = CONFIG.w, FH = CONFIG.h;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
+const wrap = (v, size) => ((v % size) + size) % size;
+const wd = (d, size) => d - size * Math.round(d / size); // the shortest way across the wrap
+const dx = (a, b) => wd(b.x - a.x, FW), dy = (a, b) => wd(b.y - a.y, FH);
+const dist = (a, b) => Math.hypot(dx(a, b), dy(a, b));
+/** The spot farthest from every rock and ship (a few random tries). */
+function safeSpot() {
+  let best = { x: rnd(0, FW), y: rnd(0, FH) }, bd = -1;
+  const rocks = rockList(), ships = allShips().filter((s) => !s.dead);
+  for (let i = 0; i < 16; i++) {
+    const p = { x: rnd(0, FW), y: rnd(0, FH) };
+    let d = 9999;
+    for (const r of rocks) d = Math.min(d, dist(p, r) - ROCK_R[r.s] * 2);
+    for (const s of ships) d = Math.min(d, dist(p, s) * 0.6);
+    if (d > bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
+// ── SHIPS ───────────────────────────────────────────────────────────────────────────
+// A ship (me or a bot): { id, name, color, x, y, vx, vy, a (heading), t (thrusting), dead, shieldUntil, cd, score }.
+function newShip(id, name, color) { return { id, name, color, x: FW / 2, y: FH / 2, vx: 0, vy: 0, a: -Math.PI / 2, t: 0, dead: 0, shieldUntil: 0, cd: 0, score: 0, firedAt: -1e9 }; }
+/** Turn (-1..1), thrust (-0.5..1), drag, speed limit, wrap. */
+function flyShip(s, dt, turn, thrust) {
+  s.a += Math.max(-1, Math.min(1, turn)) * CONFIG.turn * dt;
+  s.t = thrust > 0 ? 1 : 0;
+  s.vx += Math.cos(s.a) * CONFIG.thrust * thrust * dt; s.vy += Math.sin(s.a) * CONFIG.thrust * thrust * dt;
+  const k = Math.exp(-CONFIG.drag * dt), sp = Math.hypot(s.vx, s.vy), cap = sp > CONFIG.maxSpeed ? CONFIG.maxSpeed / sp : 1;
+  s.vx *= k * cap; s.vy *= k * cap;
+  s.x = wrap(s.x + s.vx * dt, FW); s.y = wrap(s.y + s.vy * dt, FH);
+}
+/** How hard to turn to face angle `want` this frame (-1..1). */
+const turnToward = (s, want, dt) => Math.atan2(Math.sin(want - s.a), Math.cos(want - s.a)) / (CONFIG.turn * dt);
+/** A bullet from the nose: [x, y, vx, vy] (it carries the ship's own speed). */
+function noseShot(s) {
+  s.firedAt = performance.now();
+  return [Math.round(wrap(s.x + Math.cos(s.a) * 18, FW)), Math.round(wrap(s.y + Math.sin(s.a) * 18, FH)), Math.round(s.vx + Math.cos(s.a) * CONFIG.bulletSpeed), Math.round(s.vy + Math.sin(s.a) * CONFIG.bulletSpeed)];
+}
+
+// ── BULLETS ─────────────────────────────────────────────────────────────────────────
+const bullets = [];
+function addBullet(owner, x, y, vx, vy) {
+  const s = shipById(owner);
+  bullets.push({ owner, x, y, vx, vy, life: CONFIG.bulletLife, color: s ? s.color : "#fff" });
+  const v = views.get(owner); if (v) v.firedAt = performance.now();
+}
+/** Move every bullet (two half-steps). Rocks and ships stop them; the one hit (or the host, for rocks and bots) decides. */
+function stepBullets(dt) {
+  const rocks = rockList(), ships = allShips().filter((s) => !s.dead), now = Date.now();
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    let gone = (b.life -= dt) <= 0;
+    for (let k = 0; k < 2 && !gone; k++) {
+      b.x = wrap(b.x + b.vx * dt / 2, FW); b.y = wrap(b.y + b.vy * dt / 2, FH);
+      for (const r of rocks) {
+        if (gone || Math.abs(dx(b, r)) > ROCK_R[r.s] + 3 || dist(b, r) > ROCK_R[r.s] + 3) continue;
+        gone = true; sparks(b.x, b.y, "#cfd8ff", 6, 160);
+        if (world.acting) breakRock(r, b.owner, b.vx, b.vy);
+      }
+      for (const s of ships) {
+        if (gone || s.id === b.owner || dist(b, s) > SHIP_R + 3) continue;
+        gone = true; sparks(b.x, b.y, s.color, 6, 160);
+        if (now < (s.shieldUntil || 0) || s.sh) continue;
+        if (s === me) crash("shot", b.owner);                    // me: my own fact
+        else if (s.bot && world.acting) botDown(s, "shot", b.owner); // a bot: the host decides
+      }
+    }
+    if (gone) bullets.splice(i, 1);
+  }
+}
+
+// ── ROCKS (HOST) ────────────────────────────────────────────────────────────────────
+const world = { acting: false, rocks: new Map(), nextId: 1, bots: new Map(), dirty: false, lastRocks: 0, lastBots: 0, lastSpawn: 0, shots: [] };
+/** Become host: take over the rocks and bots. Where this screen has been carrying them forward (the old
+ *  host may have gone quiet up to 3s ago), start from there, not from its last write: no jump back. */
+function adoptWorld() {
+  world.acting = true; world.rocks.clear(); world.bots.clear();
+  for (const [id, s, x, y, vx, vy] of parseOnce("rocks", S.shared.rocks, [])) {
+    const v = rockViews.get(id);
+    if (ROCK_R[s]) world.rocks.set(id, v ? { id, s, x: v.x, y: v.y, vx, vy } : { id, s, x, y, vx, vy });
+  }
+  world.nextId = Math.max(0, ...world.rocks.keys()) + 1;
+  for (const b of parseOnce("bots", S.shared.bots, [])) {
+    const v = views.get(b.i);
+    const s = Object.assign(newShip(b.i, b.n, b.c), { x: v ? v.x : b.x, y: v ? v.y : b.y, vx: b.vx, vy: b.vy, a: v ? v.a : b.a, dead: b.d, score: b.sc || 0, bot: true, respawnAt: Date.now() + 1000 });
+    brainFor(s); world.bots.set(s.id, s);
+  }
+  world.dirty = true;
+}
+/** A big rock comes in far from every ship, drifting across the field. */
+function spawnRock(size = 3) {
+  const at = safeSpot(), a = rnd(0, Math.PI * 2), sp = rnd(...CONFIG.rockSpeed);
+  const id = world.nextId++;
+  world.rocks.set(id, { id, s: size, x: at.x, y: at.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp });
+  world.dirty = true;
+}
+/** A bullet (or a ship) hit a rock on the host's screen: it splits in two smaller ones, and the shooter scores. */
+function breakRock(r, by, ivx = 0, ivy = 0) {
+  if (!world.rocks.has(r.id)) return;
+  world.rocks.delete(r.id); world.dirty = true;
+  rockBurst(r);
+  if (r.s > 1 && world.rocks.size < CONFIG.maxRocks - 1) {
+    const sp = Math.hypot(r.vx, r.vy) * rnd(1.3, 1.7) + 30, base = Math.atan2(r.vy + ivy * 0.04, r.vx + ivx * 0.04);
+    for (const side of [-1, 1]) {
+      const a = base + side * rnd(0.4, 0.9), id = world.nextId++;
+      world.rocks.set(id, { id, s: r.s - 1, x: wrap(r.x + Math.cos(a) * ROCK_R[r.s - 1], FW), y: wrap(r.y + Math.sin(a) * ROCK_R[r.s - 1], FH), vx: Math.cos(a) * sp, vy: Math.sin(a) * sp });
+    }
+  }
+  if (!by) return;
+  const n = CONFIG.points[r.s], bot = world.bots.get(by);
+  if (by === me.id) score(n, r.x, r.y);
+  else if (bot) bot.score += n;
+  else net.send("pts", { to: by, n, x: Math.round(r.x), y: Math.round(r.y) });
+}
+
+// ── BOTS (HOST) ─────────────────────────────────────────────────────────────────────
+// Each bot has a temper: it shoots rocks for points, hunts ships it can catch, and steers clear of rocks about to hit it.
+function brainFor(b) { Object.assign(b, { aggr: rnd(...CONFIG.botAggr), target: null, thinkAt: 0, seed: Math.random() * 9 }); }
+function newBot() {
+  const names = new Set(allShips().map((s) => s.name)), used = new Set(allShips().map((s) => s.color)), id = "b" + Math.random().toString(36).slice(2, 6);
+  const b = Object.assign(newShip(id, BOT_NAMES.find((n) => !names.has(n)) || "Bot", COLORS.find((c) => !used.has(c)) || pick(COLORS)), { bot: true });
+  brainFor(b); placeShip(b);
+  return b;
+}
+function placeShip(s) { const at = safeSpot(); Object.assign(s, { x: at.x, y: at.y, vx: 0, vy: 0, a: rnd(0, Math.PI * 2), dead: 0, shieldUntil: Date.now() + CONFIG.shieldMs, cd: 0.5, bornAt: performance.now() }); }
+/** Bots fill the field up to CONFIG.seats; one leaves when a person joins. A bot never wears a person's color. */
+function fitBots() {
+  const humans = livePlayers().filter((id) => !(ATTRACT && id === me.id)).length, want = Math.max(0, CONFIG.seats - humans);
+  const people = new Set(allShips().filter((s) => !s.bot).map((s) => s.color));
+  for (const b of world.bots.values()) if (people.has(b.color)) { const used = new Set(allShips().map((s) => s.color)); b.color = COLORS.find((c) => !used.has(c)) || b.color; }
+  if (world.bots.size > want) world.bots.delete([...world.bots.keys()].pop());
+  if (world.bots.size < want && performance.now() - world.lastSpawn > 500) { world.lastSpawn = performance.now(); const b = newBot(); world.bots.set(b.id, b); }
+}
+/** A bot is down (the host decides for bots). */
+function botDown(b, why, by) {
+  if (b.dead) return;
+  Object.assign(b, { dead: 1, respawnAt: Date.now() + CONFIG.respawnMs });
+  const msg = { v: b.id, by: by || "", why };
+  net.send("down", msg); onDown(msg);
+}
+/** The rock about to hit this ship in the next ~0.9s, or null. */
+function incoming(s, rocks) {
+  let worst = null, wt = 0.9;
+  for (const r of rocks) {
+    const rx = dx(s, r), ry = dy(s, r), vx = r.vx - s.vx, vy = r.vy - s.vy, v2 = vx * vx + vy * vy || 1;
+    const t = -(rx * vx + ry * vy) / v2;
+    if (t < 0 || t > wt) continue;
+    if (Math.hypot(rx + vx * t, ry + vy * t) < ROCK_R[r.s] + SHIP_R + 26) { wt = t; worst = r; }
+  }
+  return worst;
+}
+/** One bot's brain: dodge, pick a target, lead it, shoot when lined up, thrust to keep a fighting distance. */
+function stepBot(b, dt, t, ships, rocks) {
+  if (b.dead) { if (t >= b.respawnAt) placeShip(b); return; }
+  if (t > b.thinkAt) {
+    b.thinkAt = t + 400;
+    let foe = null, fd = CONFIG.botRange;
+    for (const o of ships) { if (o.id === b.id || o.dead || t < (o.shieldUntil || 0) || o.sh || performance.now() - (o.bornAt ?? -1e9) < CONFIG.graceMs) continue; const d = dist(o, b); if (d < fd) { fd = d; foe = o; } }
+    let rock = null, rd = Infinity;
+    for (const r of rocks) { const d = dist(r, b) - ROCK_R[r.s]; if (d < rd) { rd = d; rock = r; } }
+    b.target = foe && Math.random() < b.aggr ? { id: foe.id, ship: true } : rock ? { id: rock.id, ship: false } : null;
+  }
+  const danger = incoming(b, rocks);
+  const tg = !b.target ? null : b.target.ship ? ships.find((o) => o.id === b.target.id && !o.dead) : rocks.find((r) => r.id === b.target.id);
+  let want = b.a, thrust = 0, d = 0;
+  if (danger) { // turn side-on to the rock and burn
+    const away = Math.atan2(-dy(b, danger), -dx(b, danger)), side = Math.sin(b.seed) > 0 ? 1 : -1;
+    want = away + side * 0.9; thrust = Math.abs(Math.atan2(Math.sin(want - b.a), Math.cos(want - b.a))) < 0.8 ? 1 : 0;
+  } else if (tg) {
+    d = dist(b, tg);
+    const lead = d / CONFIG.bulletSpeed, tx = dx(b, tg) + ((tg.vx || 0) - b.vx) * lead, ty = dy(b, tg) + ((tg.vy || 0) - b.vy) * lead;
+    want = Math.atan2(ty, tx) + Math.sin(t / 350 + b.seed) * CONFIG.botAim;
+    const facing = Math.abs(Math.atan2(Math.sin(want - b.a), Math.cos(want - b.a))) < 0.5;
+    thrust = d > (b.target.ship ? 380 : 300) && facing && Math.hypot(b.vx, b.vy) < 300 ? 1 : 0;
+  } else { want = b.a + Math.sin(t / 700 + b.seed) * 0.5; thrust = Math.hypot(b.vx, b.vy) < 120 ? 1 : 0; }
+  flyShip(b, dt, turnToward(b, want, dt), thrust);
+  b.cd -= dt;
+  if (!danger && tg && b.cd <= 0 && d < 720 && Math.abs(Math.atan2(Math.sin(want - b.a), Math.cos(want - b.a))) < 0.14) {
+    b.cd = CONFIG.botFireEvery * rnd(0.8, 1.3);
+    const [x, y, vx, vy] = noseShot(b);
+    addBullet(b.id, x, y, vx, vy); world.shots.push([b.id, x, y, vx, vy]);
+  }
+  if (b !== me.brain) for (const r of rocks) if (t > b.shieldUntil && dist(b, r) < ROCK_R[r.s] * 0.85 + SHIP_R) { breakRock(r, ""); botDown(b, "rock", ""); break; } // the host decides bot crashes too
+}
+
+function hostTick(dt, now) {
+  if (!world.acting) adoptWorld();
+  fitBots();
+  const load = [...world.rocks.values()].reduce((n, r) => n + r.s, 0);
+  if (load < CONFIG.rockLoad && world.rocks.size < CONFIG.maxRocks - 4 && now - world.lastSpawn > 300) { world.lastSpawn = now; spawnRock(3); }
+  for (const r of world.rocks.values()) { r.x = wrap(r.x + r.vx * dt, FW); r.y = wrap(r.y + r.vy * dt, FH); }
+  const t = Date.now(), ships = allShips(), rocks = [...world.rocks.values()];
+  for (const b of world.bots.values()) stepBot(b, dt, t, ships, rocks);
+  if (now - world.lastBots > 100) { // ~10/s, one message for every bot, and their shots
+    world.lastBots = now;
+    net.setShared("bots", JSON.stringify([...world.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: Math.round(b.x), y: Math.round(b.y), vx: Math.round(b.vx), vy: Math.round(b.vy),
+      a: +b.a.toFixed(2), t: b.t, d: b.dead, sh: t < b.shieldUntil ? 1 : 0, sc: b.score }))));
+    if (world.shots.length) { net.send("shots", { list: world.shots.splice(0, 40) }); world.shots.length = 0; }
+  }
+  if (now - world.lastRocks > (world.dirty ? 150 : 400)) { // at once when rocks split or arrive, else a few times a second to keep everyone in step
+    world.lastRocks = now; world.dirty = false;
+    net.setShared("rocks", JSON.stringify(rocks.map((r) => [r.id, r.s, Math.round(r.x), Math.round(r.y), Math.round(r.vx), Math.round(r.vy)])));
+  }
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  pick(["Star", "Cosmic", "Rocket", "Lucky", "Turbo", "Astro"]) + " " + pick(["Pilot", "Ace", "Comet", "Ranger", "Rider", "Jet"]);
+const me = Object.assign(newShip("", myName, COLORS[0]), { mine: true, lives: CONFIG.lives, over: false, best: 0, respawnAt: 0, lastSend: 0, lastSubmit: 0, submitted: 0, downs: 0, killer: "", hurtAt: -1e9, brain: null });
+const input = { turn: 0, thrust: 0, fire: false, aim: null };
+
+function newRun() {
+  Object.assign(me, { lives: CONFIG.lives, score: 0, best: 0, downs: 0, over: false });
+  launch();
+  $("over").hidden = true;
+}
+function launch() {
+  placeShip(me);
+  if (ATTRACT) { me.brain = Object.assign(newShip(me.id, myName, me.color), { bot: true }); brainFor(me.brain); me.brain.aggr = 0.7; }
+  cam.x = me.x; cam.y = me.y;
+  publish(true);
+}
+/** Points for me (a rock I broke, a ship I downed). */
+function score(n, x, y) {
+  if (me.over) return;
+  me.score += n; me.best = Math.max(me.best, me.score);
+  fx.texts.push({ text: `+${n}`, x, y, life: 1 });
+}
+/** My ship is down (a bullet or a rock reached it on MY screen). */
+function crash(why, by, rock) {
+  if (me.dead || me.over || Date.now() < me.shieldUntil) return;
+  me.dead = 1; me.hurtAt = performance.now(); me.lives = ATTRACT ? me.lives : me.lives - 1; me.killer = by ? nameOf(by) : "";
+  me.respawnAt = Date.now() + CONFIG.respawnMs;
+  const msg = { v: me.id, by: by || "", why };
+  net.send("down", msg); onDown(msg);
+  if (rock) { if (world.acting) breakRock(rock, ""); else net.send("ram", { id: rock.id, x: Math.round(me.x), y: Math.round(me.y) }); }
+  if (me.lives <= 0) { me.over = true; setTimeout(showOver, 1200); }
+  publish(true);
+}
+/** Someone went down: a feed line and an explosion for everyone, the points for the shooter. */
+function onDown(msg) {
+  if (!msg || !msg.v) return;
+  const v = shipById(msg.v);
+  if (v) shipBurst(v);
+  feed.unshift({ text: msg.by ? `${nameOf(msg.by)} downed ${nameOf(msg.v)}` : `${nameOf(msg.v)} hit a rock`, color: (shipById(msg.by) || v || {}).color || "#fff", at: performance.now() });
+  feed.length = Math.min(feed.length, 4);
+  if (msg.by && msg.by === me.id && msg.v !== me.id) { me.downs++; score(CONFIG.shipPoints, v ? v.x : me.x, v ? v.y : me.y); toast(`You downed ${nameOf(msg.v)}!`); sfx("kill"); }
+  if (world.acting) { const b = world.bots.get(msg.by); if (b) b.score += CONFIG.shipPoints; }
+}
+function myTick(dt) {
+  const t = Date.now();
+  if (me.dead) {
+    if (!me.over && t >= me.respawnAt) { launch(); me.dead = 0; }
+    publish(false); return;
+  }
+  if (ATTRACT) { // the preview flies you with the bot brain
+    const b = me.brain, shotsBefore = world.shots.length;
+    Object.assign(b, { x: me.x, y: me.y, vx: me.vx, vy: me.vy, a: me.a, dead: 0, shieldUntil: me.shieldUntil, cd: me.cd });
+    stepBot(b, dt, t, allShips().filter((s) => s !== me), rockList());
+    world.shots.length = shotsBefore;
+    Object.assign(me, { x: b.x, y: b.y, vx: b.vx, vy: b.vy, a: b.a, t: b.t, cd: b.cd });
+  } else {
+    const turn = input.aim !== null ? turnToward(me, input.aim, dt) : input.turn;
+    flyShip(me, dt, turn, input.thrust);
+    me.cd -= dt;
+    if (input.fire && me.cd <= 0) {
+      me.cd = CONFIG.fireEvery;
+      const [x, y, vx, vy] = noseShot(me);
+      addBullet(me.id, x, y, vx, vy); net.send("shot", { x, y, vx, vy }); sfx("shot");
+    }
+    if (input.thrust > 0 && Math.random() < 0.6) thrustPuff(me);
+  }
+  // Crashing into a rock is MY fact (the rocks I see are carried forward between snapshots).
+  if (t > me.shieldUntil) for (const r of rockList()) if (dist(me, r) < ROCK_R[r.s] * 0.85 + SHIP_R) { crash("rock", "", r); break; }
+  const now = performance.now();
+  if (board && me.best > me.submitted && now - me.lastSubmit > 30000) { me.lastSubmit = now; me.submitted = me.best; board.submit(me.best).catch(() => null); }
+  publish(false);
+}
+function publish(force) {
+  const now = performance.now();
+  if (!force && now - me.lastSend < 80) return; // ~12/s
+  me.lastSend = now;
+  net.me.set("s", JSON.stringify({ x: Math.round(me.x), y: Math.round(me.y), vx: Math.round(me.vx), vy: Math.round(me.vy), a: +me.a.toFixed(2), t: me.t, d: me.dead || me.over ? 1 : 0,
+    sh: Date.now() < me.shieldUntil ? 1 : 0, sc: me.score, l: me.lives }));
+}
+/** The colors the bots wear right now (from the shared bots field: it works before any frame has run). */
+const botColors = () => parse(S.shared.bots, []).map((b) => b && b.c);
+/** Two people in one color: the one with the higher sessionId picks a color nobody (and no bot) wears. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
+  if (!others.some(([id, p]) => p.c === me.color && id < net.sessionId)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botColors()]), free = COLORS.find((c) => !taken.has(c));
+  if (free) { me.color = free; net.me.set("c", free); }
+}
+
+// ── OTHERS ──────────────────────────────────────────────────────────────────────────
+const views = new Map();     // id -> someone else's ship (a person, or a bot on a non-host screen), eased toward its snapshots
+const rockViews = new Map(); // id -> a rock on a non-host screen: carried along its velocity, nudged toward each snapshot
+function syncViews(dt) {
+  const k = 1 - Math.pow(0.0005, dt), seen = new Set(), live = new Set(livePlayers()), now = performance.now();
+  const add = (id, q, name, color, bot) => {
+    if (!q || typeof q.x !== "number") return;
+    seen.add(id);
+    let v = views.get(id);
+    if (!v) { v = { id, bot, x: q.x, y: q.y, a: q.a || 0, firedAt: -1e9, raw: null, at: now, bornAt: now }; views.set(id, v); }
+    if (v.raw !== q) { v.raw = q; v.at = now; }
+    if (v.dead && !q.d) { v.x = q.x; v.y = q.y; v.bornAt = now; } // a new ship: no easing across the field
+    Object.assign(v, { name, color, vx: q.vx || 0, vy: q.vy || 0, t: q.t ? 1 : 0, dead: q.d ? 1 : 0, sh: q.sh ? 1 : 0, score: q.sc || 0 });
+    const age = Math.min(0.25, (now - v.at) / 1000), tx = q.x + v.vx * age, ty = q.y + v.vy * age; // carried forward: snapshots are ~100ms apart
+    v.x = wrap(v.x + wd(tx - v.x, FW) * k, FW); v.y = wrap(v.y + wd(ty - v.y, FH) * k, FH); v.a += Math.atan2(Math.sin(q.a - v.a), Math.cos(q.a - v.a)) * Math.min(1, k * 1.5);
+  };
+  for (const [id, p] of Object.entries(S.entities.players || {})) if (id !== net.sessionId && live.has(id)) add(id, parseOnce("s:" + id, p.s, null), p.n || "Pilot", p.c || "#fff", false);
+  if (!world.acting) for (const b of parseOnce("bots", S.shared.bots, [])) add(b.i, b, b.n, b.c, true);
+  for (const id of views.keys()) if (!seen.has(id)) views.delete(id);
+  if (world.acting) { rockViews.clear(); return; } // the host flies its own rocks
+  const list = parseOnce("rocks", S.shared.rocks, []), ids = new Set();
+  for (const [id, s, x, y, vx, vy] of list) {
+    if (!ROCK_R[s]) continue;
+    ids.add(id);
+    let r = rockViews.get(id);
+    if (!r) { r = { id, s, x, y, vx, vy, raw: null }; rockViews.set(id, r); }
+    r.vx = vx; r.vy = vy;
+    if (r.raw !== list) { r.raw = list; r.sx = x; r.sy = y; r.at = now; }
+    const age = (now - r.at) / 1000, tx = r.sx + vx * age, ty = r.sy + vy * age;
+    r.x = wrap(r.x + vx * dt, FW); r.y = wrap(r.y + vy * dt, FH);                           // fly on...
+    r.x = wrap(r.x + wd(tx - r.x, FW) * k * 0.5, FW); r.y = wrap(r.y + wd(ty - r.y, FH) * k * 0.5, FH); // ...and settle onto where the host says it is
+  }
+  for (const [id, r] of rockViews) if (!ids.has(id)) { rockViews.delete(id); rockBurst(r); }
+}
+const rockList = () => (world.acting ? [...world.rocks.values()] : [...rockViews.values()]);
+/** Every ship this screen knows about: others (eased), the host's own bots, and me. */
+function allShips() {
+  const out = [...views.values()].filter((v) => !(world.acting && v.bot)); // just became host: its own bots replace the snapshots
+  if (world.acting) out.push(...world.bots.values());
+  out.push(me);
+  return out;
+}
+const shipById = (id) => allShips().find((s) => s.id === id);
+const nameOf = (id) => (id === me.id ? "You" : (shipById(id) || {}).name || "Someone");
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function fit() { DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+const cam = { x: FW / 2, y: FH / 2, z: 1, shake: 0 };
+const zoom = () => Math.max(Math.sqrt(W * H) / (ATTRACT ? 530 : 900), W / (FW * 0.9), H / (FH * 0.9)); // zoomed in enough that the screen never shows the whole wrap
+const fx = { parts: [], texts: [], rings: [] };
+const STARS = [0.15, 0.35].map((depth) => ({ depth, list: Array.from({ length: 140 }, () => [Math.random() * FW, Math.random() * FH, Math.random() * 1.4 + 0.4]) }));
+// Each rock gets a lumpy outline from its id, the same on every screen.
+const rockShapes = new Map();
+function rockShape(r) {
+  if (!rockShapes.has(r.id)) { let seed = r.id * 9301 + 49297; const rand = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280); rockShapes.set(r.id, Array.from({ length: 11 }, () => 0.72 + rand() * 0.38)); }
+  return rockShapes.get(r.id);
+}
+function sparks(x, y, color, n, speed = 240) { for (let i = 0; i < n; i++) { const a = rnd(0, Math.PI * 2), s = rnd(0.2, 1) * speed; fx.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rnd(0.3, 0.8), color, s: rnd(1.5, 3.5) }); } }
+function rockBurst(r) { sparks(r.x, r.y, "#cfd8ff", 8 + r.s * 6, 120 + r.s * 60); fx.rings.push({ x: r.x, y: r.y, t: 0, r: ROCK_R[r.s], color: "#cfd8ff" }); if (dist(r, me) < 600) sfx(r.s === 3 ? "boom" : "crack"); }
+function shipBurst(s) {
+  sparks(s.x, s.y, s.color, 40, 380); sparks(s.x, s.y, "#ffffff", 14, 220); fx.rings.push({ x: s.x, y: s.y, t: 0, r: 20, color: s.color });
+  for (let i = 0; i < 3; i++) { const a = rnd(0, Math.PI * 2); fx.parts.push({ x: s.x, y: s.y, vx: Math.cos(a) * 90, vy: Math.sin(a) * 90, life: 1.2, color: s.color, s: 2, line: rnd(0, Math.PI) }); }
+  if (dist(s, me) < 500) { cam.shake = 12; sfx("boom"); }
+}
+function thrustPuff(s) { const a = s.a + Math.PI + rnd(-0.3, 0.3); fx.parts.push({ x: s.x - Math.cos(s.a) * 12, y: s.y - Math.sin(s.a) * 12, vx: s.vx + Math.cos(a) * 160, vy: s.vy + Math.sin(a) * 160, life: rnd(0.15, 0.35), color: "#ffb347", s: 2.5 }); }
+/** Where a world point lands on screen: through its nearest copy across the wrap. */
+const sx = (x) => W / 2 + wd(x - cam.x, FW) * cam.z, sy = (y) => H / 2 + wd(y - cam.y, FH) * cam.z;
+const onScreen = (x, y, m) => x > -m && y > -m && x < W + m && y < H + m;
+
+function draw(dt, now) {
+  cam.z = zoom();
+  const lead = me.dead ? 0 : 0.25, ease = Math.min(1, dt * (ATTRACT ? 3 : 6)); // look a little ahead of the ship; hold still while it's down
+  if (!me.dead || ATTRACT) { cam.x = wrap(cam.x + wd(me.x + me.vx * lead - cam.x, FW) * ease, FW); cam.y = wrap(cam.y + wd(me.y + me.vy * lead - cam.y, FH) * ease, FH); }
+  cam.shake = Math.max(0, cam.shake - dt * 30);
+  const shx = rnd(-1, 1) * cam.shake, shy = rnd(-1, 1) * cam.shake, z = cam.z;
+  ctx.setTransform(DPR, 0, 0, DPR, DPR * shx, DPR * shy);
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.75); bg.addColorStop(0, "#0d1130"); bg.addColorStop(1, "#05060f");
+  ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
+  for (const layer of STARS) { // stars drift slower than the field: depth
+    ctx.fillStyle = `rgba(200,215,255,${0.35 + layer.depth})`;
+    for (const [x, y, s] of layer.list) { const px = W / 2 + wd(x - cam.x * layer.depth, FW) * z, py = H / 2 + wd(y - cam.y * layer.depth, FH) * z; if (onScreen(px, py, 2)) ctx.fillRect(px, py, s, s); }
+  }
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  for (const r of rockList()) drawRock(r, now);
+  for (const b of bullets) {
+    const x = sx(b.x), y = sy(b.y), sp = Math.hypot(b.vx, b.vy) || 1;
+    if (!onScreen(x, y, 20)) continue;
+    ctx.strokeStyle = b.color; ctx.globalAlpha = 0.35; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(x - b.vx / sp * 14 * z, y - b.vy / sp * 14 * z); ctx.lineTo(x, y); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(x, y, 2.4 * Math.max(1, z), 0, Math.PI * 2); ctx.fill();
+  }
+  for (const s of allShips()) if (!s.dead) drawShip(s, now);
+  for (let i = fx.rings.length - 1; i >= 0; i--) {
+    const r = fx.rings[i]; r.t += dt; if (r.t > 0.5) { fx.rings.splice(i, 1); continue; }
+    ctx.globalAlpha = 1 - r.t / 0.5; ctx.strokeStyle = r.color; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(sx(r.x), sy(r.y), (r.r + r.t * 160) * z, 0, Math.PI * 2); ctx.stroke();
+  }
+  for (let i = fx.parts.length - 1; i >= 0; i--) {
+    const p = fx.parts[i]; p.life -= dt; if (p.life <= 0) { fx.parts.splice(i, 1); continue; }
+    p.x = wrap(p.x + p.vx * dt, FW); p.y = wrap(p.y + p.vy * dt, FH); p.vx *= 0.97; p.vy *= 0.97;
+    const x = sx(p.x), y = sy(p.y);
+    if (!onScreen(x, y, 20)) continue;
+    ctx.globalAlpha = Math.min(1, p.life * 2.5); ctx.fillStyle = p.color; ctx.strokeStyle = p.color;
+    if (p.line !== undefined) { p.line += dt * 3; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - Math.cos(p.line) * 8 * z, y - Math.sin(p.line) * 8 * z); ctx.lineTo(x + Math.cos(p.line) * 8 * z, y + Math.sin(p.line) * 8 * z); ctx.stroke(); }
+    else ctx.fillRect(x - p.s / 2, y - p.s / 2, p.s, p.s);
+  }
+  ctx.globalAlpha = 1; ctx.textAlign = "center"; ctx.font = "800 18px ui-monospace, Menlo, monospace";
+  for (let i = fx.texts.length - 1; i >= 0; i--) {
+    const f = fx.texts[i]; f.life -= dt; if (f.life <= 0) { fx.texts.splice(i, 1); continue; }
+    f.y -= 40 * dt; ctx.globalAlpha = Math.min(1, f.life * 2); ctx.fillStyle = "#ffe066"; ctx.fillText(f.text, sx(f.x), sy(f.y));
+  }
+  ctx.globalAlpha = 1;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const hurt = now - me.hurtAt;
+  if (hurt < 400 && !ATTRACT) { ctx.fillStyle = `rgba(255,80,110,${0.3 * (1 - hurt / 400)})`; ctx.fillRect(0, 0, W, H); }
+  drawRadar();
+}
+function drawRock(r, now) {
+  const x = sx(r.x), y = sy(r.y), R = ROCK_R[r.s] * cam.z;
+  if (!onScreen(x, y, R + 4)) return;
+  const shape = rockShape(r), spin = (r.id % 2 ? 1 : -1) * (0.25 + (r.id % 5) * 0.08) * now / 1000 + r.id;
+  ctx.beginPath();
+  shape.forEach((k, i) => { const a = spin + (i / shape.length) * Math.PI * 2; ctx[i ? "lineTo" : "moveTo"](x + Math.cos(a) * R * k, y + Math.sin(a) * R * k); });
+  ctx.closePath();
+  ctx.fillStyle = "#151a33"; ctx.fill();
+  ctx.strokeStyle = "#8f9bd8"; ctx.globalAlpha = 0.25; ctx.lineWidth = 7; ctx.stroke();
+  ctx.globalAlpha = 1; ctx.strokeStyle = "#cfd8ff"; ctx.lineWidth = 2; ctx.stroke();
+}
+function drawShip(s, now) {
+  const x = sx(s.x), y = sy(s.y), z = cam.z, k = SHIP_R * z * 1.25;
+  if (!onScreen(x, y, 40)) return;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(s.a);
+  if (s.t && Math.random() < 0.85) { // the flame
+    const f = k * rnd(0.9, 1.6);
+    ctx.beginPath(); ctx.moveTo(-k * 0.55, -k * 0.35); ctx.lineTo(-k * 0.55 - f, 0); ctx.lineTo(-k * 0.55, k * 0.35);
+    ctx.fillStyle = "#ffb347"; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
+  }
+  ctx.beginPath(); ctx.moveTo(k * 1.2, 0); ctx.lineTo(-k * 0.8, -k * 0.75); ctx.lineTo(-k * 0.45, 0); ctx.lineTo(-k * 0.8, k * 0.75); ctx.closePath();
+  ctx.fillStyle = s.color + "33"; ctx.fill();
+  ctx.strokeStyle = s.color; ctx.globalAlpha = 0.3; ctx.lineWidth = 8; ctx.stroke();
+  ctx.globalAlpha = 1; ctx.lineWidth = 2.4; ctx.stroke();
+  const v = s === me ? me : views.get(s.id) || s;
+  if (now - (v.firedAt || -1e9) < 60) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(k * 1.3, 0, 4, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+  const shielded = s === me || (s.bot && world.acting) ? Date.now() < s.shieldUntil : s.sh;
+  if (shielded) { ctx.strokeStyle = s.color; ctx.globalAlpha = 0.4 + 0.3 * Math.sin(now / 80); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, k * 1.9, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1; }
+  if (ATTRACT) return;
+  ctx.font = "700 12px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillStyle = s === me ? "#ffe066" : s.color;
+  ctx.fillText(s === me ? "You" : s.name, x, y - k * 2.2);
+}
+function drawRadar() {
+  if (ATTRACT) return;
+  const w = Math.min(130, W * 0.3), h = w * FH / FW, x0 = W - w - 14, y0 = H - h - 14 - (touchUI ? 132 : 0);
+  ctx.fillStyle = "#0b0f26cc"; ctx.strokeStyle = "#5be7ff44"; ctx.lineWidth = 1; ctx.fillRect(x0, y0, w, h); ctx.strokeRect(x0, y0, w, h);
+  const kx = w / FW, ky = h / FH;
+  ctx.fillStyle = "#8f9bd8";
+  for (const r of rockList()) { ctx.beginPath(); ctx.arc(x0 + r.x * kx, y0 + r.y * ky, Math.max(1, ROCK_R[r.s] * kx), 0, Math.PI * 2); ctx.fill(); }
+  for (const s of allShips()) if (!s.dead) { ctx.fillStyle = s === me ? "#ffe066" : s.color; ctx.fillRect(x0 + s.x * kx - 2, y0 + s.y * ky - 2, 4, 4); }
+}
+
+// ── HUD & OVER ──────────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const feed = [];
+let board = null, netDown = false, startedAt = 0, toastUntil = 0, toastText = "";
+function toast(text) { if (ATTRACT) return; toastText = text; toastUntil = performance.now() + 1500; }
+function hud(now) {
+  if (ATTRACT) { for (const id of ["score", "top", "feed", "msg", "hint", "net"]) $(id).textContent = ""; return; }
+  $("score").innerHTML = `${String(me.score).padStart(5, "0")}<small>${"<i></i>".repeat(Math.max(0, me.lives))}</small>`;
+  $("score").style.color = me.color;
+  const rows = allShips().filter((s) => !s.dead || s === me).map((s) => ({ name: s === me ? "You" : s.name, color: s.color, sc: s.score, mine: s === me })).sort((a, b) => b.sc - a.sc);
+  $("top").innerHTML = rows.slice(0, 5).map((r) => `<div class="${r.mine ? "me" : ""}"><i style="background:${r.color};color:${r.color}"></i><span>${esc(r.name)}</span><b>${r.sc}</b></div>`).join("");
+  $("feed").innerHTML = feed.filter((f) => now - f.at < 6000).map((f) => `<div style="color:${f.color}">${esc(f.text)}</div>`).join("");
+  const t = Date.now();
+  $("msg").innerHTML = me.dead && !me.over ? `${me.killer ? `Downed by ${esc(me.killer)}` : "Crashed!"}<small>Next ship in ${Math.max(0, Math.ceil((me.respawnAt - t) / 1000))}</small>` : now < toastUntil ? esc(toastText) : "";
+  $("hint").style.opacity = now - startedAt < 10000 ? 1 : 0;
+  $("hint").textContent = touchUI ? "Thumb stick steers and thrusts · hold FIRE to shoot" : "← → or the mouse to turn · ↑ / W / right-click to thrust · Space or click to shoot";
+  const n = livePlayers().length;
+  $("net").textContent = netDown ? "Reconnecting…" : net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the rocks" : ""}`;
+}
+function showOver() {
+  $("overScore").textContent = `Score ${me.score} · ${me.downs} ship${me.downs === 1 ? "" : "s"} downed`;
+  $("over").hidden = false;
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading the leaderboard…</li>";
+  board.submit(me.score).catch(() => null).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No scores yet. You're first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => newRun();
+
+let audio = null; // made on the first tap or key (browsers block sound before that)
+function sfx(kind) {
+  if (!audio || ATTRACT) return;
+  const [f0, f1, dur, vol, type] = { shot: [880, 220, 0.08, 0.03, "square"], crack: [300, 80, 0.12, 0.06, "sawtooth"], boom: [140, 40, 0.4, 0.1, "sawtooth"], kill: [440, 990, 0.3, 0.07, "triangle"] }[kind];
+  const t = audio.currentTime, o = audio.createOscillator(), g = audio.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(audio.destination); o.start(t); o.stop(t + dur + 0.02);
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+document.body.classList.toggle("touch", touchUI);
+const keys = new Set(), mouse = { x: 0, y: 0, on: false, fire: false, thrust: false };
+addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  try { audio ||= new AudioContext(); } catch {}
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(k)) e.preventDefault();
+  if (["arrowleft", "arrowright", "a", "d"].includes(k)) mouse.on = false; // keys steer: stop following the mouse
+  keys.add(k);
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => { keys.clear(); mouse.fire = mouse.thrust = false; });
+addEventListener("contextmenu", (e) => e.preventDefault());
+addEventListener("pointerdown", () => { try { audio ||= new AudioContext(); } catch {} }, { once: true });
+let stick = null; // touch: a thumb stick wherever the left thumb lands; push it to steer, push it far to thrust
+cv.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  if (e.pointerType === "mouse") { mouse.on = true; if (e.button === 0) mouse.fire = true; if (e.button === 2) mouse.thrust = true; return; }
+  if (stick) return;
+  stick = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 };
+  Object.assign($("stick").style, { left: e.clientX + "px", top: e.clientY + "px" }); $("stick").hidden = false;
+});
+addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse") { if (Math.hypot(e.clientX - mouse.x, e.clientY - mouse.y) > 3) mouse.on = true; mouse.x = e.clientX; mouse.y = e.clientY; return; }
+  if (!stick || stick.id !== e.pointerId) return;
+  let ddx = e.clientX - stick.x0, ddy = e.clientY - stick.y0; const d = Math.hypot(ddx, ddy);
+  if (d > 50) { ddx *= 50 / d; ddy *= 50 / d; }
+  stick.dx = ddx; stick.dy = ddy; $("stick").firstChild.style.transform = `translate(${ddx}px, ${ddy}px)`;
+});
+for (const ev of ["pointerup", "pointercancel"]) addEventListener(ev, (e) => {
+  if (e.pointerType === "mouse") { if (e.button === 0) mouse.fire = false; if (e.button === 2) mouse.thrust = false; return; }
+  if (stick && stick.id === e.pointerId) { stick = null; $("stick").hidden = true; }
+});
+const fireBtn = $("fire");
+fireBtn.hidden = !touchUI;
+let fireHeld = false;
+fireBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); fireHeld = true; fireBtn.classList.add("on"); try { audio ||= new AudioContext(); } catch {} });
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) fireBtn.addEventListener(ev, () => { fireHeld = false; fireBtn.classList.remove("on"); });
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+/** Keys, mouse and stick into this frame's turn, thrust and trigger. Mouse aim goes through the camera that drew the frame. */
+function readInput() {
+  input.turn = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
+  input.thrust = keys.has("arrowup") || keys.has("w") || mouse.thrust ? 1 : keys.has("arrowdown") || keys.has("s") ? -0.5 : 0;
+  input.fire = keys.has(" ") || mouse.fire || fireHeld;
+  input.aim = null;
+  if (stick && Math.hypot(stick.dx, stick.dy) > 12) { input.aim = Math.atan2(stick.dy, stick.dx); input.thrust = Math.hypot(stick.dx, stick.dy) > 34 ? 1 : 0; }
+  else if (mouse.on && !input.turn) input.aim = Math.atan2(wd(cam.y + (mouse.y - H / 2) / cam.z - me.y, FH), wd(cam.x + (mouse.x - W / 2) / cam.z - me.x, FW));
+}
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (!isHost()) world.acting = false;
+  syncViews(dt);
+  if (isHost()) hostTick(dt, now);
+  if (me.wantLaunch) { me.wantLaunch = false; newRun(); }
+  if (!ATTRACT) readInput();
+  myTick(dt);
+  stepBullets(dt);
+  draw(dt, now);
+  if (now - lastHud > 150) { lastHud = now; hud(now); }
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("shot", (msg, from) => { if (msg && typeof msg.x === "number") addBullet(from, msg.x, msg.y, Math.max(-2000, Math.min(2000, msg.vx)), Math.max(-2000, Math.min(2000, msg.vy))); });
+  net.on("shots", (msg) => { if (msg && Array.isArray(msg.list)) for (const [id, x, y, vx, vy] of msg.list.slice(0, 40)) addBullet(id, x, y, vx, vy); });
+  net.on("down", (msg) => onDown(msg));
+  net.on("pts", (msg) => { if (msg && msg.to === me.id) score(Math.max(0, Math.min(500, Number(msg.n) || 0)), msg.x, msg.y); });
+  net.on("ram", (msg) => { const r = msg && world.acting && world.rocks.get(msg.id); if (r && dist({ x: +msg.x || 0, y: +msg.y || 0 }, r) < ROCK_R[r.s] + 120) breakRock(r, ""); }); // only a rock near where the ship went down
+  net.onDisconnect(() => { netDown = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { netDown = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...botColors()]);
+  me.id = net.sessionId; me.color = COLORS.find((c) => !taken.has(c)) || pick(COLORS);
+  net.me.set({ n: myName, c: me.color, hb: Date.now() });
+  startedAt = performance.now(); me.wantLaunch = true;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

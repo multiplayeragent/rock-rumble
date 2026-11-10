@@ -1,0 +1,21 @@
+{
+  "name": "Rock Rumble",
+  "genre": "arcade",
+  "dim": "2D",
+  "mode": "Drop-in",
+  "players": "2–12",
+  "hook": "Blast the rocks. Blast each other. Three ships.",
+  "how": "Thrust and turn through a field that wraps at every edge. Big rocks split into smaller, faster ones worth more points. Down another ship for 200. You get three ships a run; touch a rock or a bullet and you lose one.",
+  "controls": "Arrow keys or the mouse to turn, Up or right-click to thrust, Space or click to shoot; thumb stick and FIRE on touch",
+  "uses": [
+    ["Leaderboard", "Each player's best score in one run of three ships."],
+    ["Host-run rules", "The host's browser flies the rocks and decides who broke them; if it leaves, the next player takes over."],
+    ["Bots", "Bot ships fill the field until enough people join."],
+    ["Live sync", "Every ship, rock and bullet moves for everyone at once; whoever gets hit says so."]
+  ],
+  "ideas": [
+    "Add a shield pickup that floats out of broken rocks",
+    "Make it underwater, with submarines and jellyfish",
+    "Add a black hole in the middle that pulls everything in"
+  ]
+}
