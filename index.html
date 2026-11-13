@@ -27,6 +27,7 @@
   .card h2 { margin: 0 0 4px; font-size: 26px; letter-spacing: .04em; }
   .card h3 { margin: 16px 0 4px; font-size: 12px; color: #5be7ff; text-transform: uppercase; letter-spacing: .08em; text-align: left; }
   .card ol { text-align: left; margin: 0 0 16px; padding-left: 26px; font-size: 14px; min-height: 40px; }
+  .card li.note { list-style: none; margin-left: -26px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
   button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #5be7ff; color: #041018; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   .stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; border: 2px solid #ffffff44; background: #ffffff10; pointer-events: none; }
@@ -34,7 +35,7 @@
   #fire { position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px)); width: 92px; height: 92px; border-radius: 50%;
           border: 2px solid #ff6b8b88; background: #ff6b8b22; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
   #fire.on { background: #ff6b8b66; }
-  .touch #hint { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 140px); }
+  .touch #hint { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 236px); } /* above the radar */
   @media (max-width: 640px) { #top { width: 128px; font-size: 12px; } #score { font-size: 22px; } }
 </style>
 <script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
@@ -54,7 +55,7 @@
     <h2>Game over</h2>
     <div id="overScore"></div>
     <h3>High scores, all time</h3>
-    <ol id="board"><li>Loading the leaderboard…</li></ol>
+    <ol id="board"><li class="note">Loading the leaderboard…</li></ol>
     <button class="go" id="again">Play again</button>
   </div>
 </div>
@@ -273,7 +274,7 @@ function adoptWorld() {
   world.nextId = Math.max(0, ...world.rocks.keys()) + 1;
   for (const b of parseOnce("bots", S.shared.bots, [])) {
     const v = views.get(b.i);
-    const s = Object.assign(newShip(b.i, b.n, b.c), { x: v ? v.x : b.x, y: v ? v.y : b.y, vx: b.vx, vy: b.vy, a: v ? v.a : b.a, dead: b.d, score: b.sc || 0, bot: true, respawnAt: Date.now() + 1000 });
+    const s = Object.assign(newShip(b.i, b.n, b.c), { x: v ? v.x : b.x, y: v ? v.y : b.y, vx: b.vx, vy: b.vy, a: v ? v.a : b.a, dead: b.d, score: b.sc || 0, lives: b.l || CONFIG.lives, bot: true, respawnAt: Date.now() + 1000 });
     brainFor(s); world.bots.set(s.id, s);
   }
   world.dirty = true;
@@ -306,10 +307,11 @@ function breakRock(r, by, ivx = 0, ivy = 0) {
 
 // ── BOTS (HOST) ─────────────────────────────────────────────────────────────────────
 // Each bot has a temper: it shoots rocks for points, hunts ships it can catch, and steers clear of rocks about to hit it.
+// Bots play by your rules: three ships a run, then a fresh run from 0.
 function brainFor(b) { Object.assign(b, { aggr: rnd(...CONFIG.botAggr), target: null, thinkAt: 0, seed: Math.random() * 9 }); }
 function newBot() {
   const names = new Set(allShips().map((s) => s.name)), used = new Set(allShips().map((s) => s.color)), id = "b" + Math.random().toString(36).slice(2, 6);
-  const b = Object.assign(newShip(id, BOT_NAMES.find((n) => !names.has(n)) || "Bot", COLORS.find((c) => !used.has(c)) || pick(COLORS)), { bot: true });
+  const b = Object.assign(newShip(id, BOT_NAMES.find((n) => !names.has(n)) || "Bot", COLORS.find((c) => !used.has(c)) || pick(COLORS)), { bot: true, lives: CONFIG.lives });
   brainFor(b); placeShip(b);
   return b;
 }
@@ -325,7 +327,7 @@ function fitBots() {
 /** A bot is down (the host decides for bots). */
 function botDown(b, why, by) {
   if (b.dead) return;
-  Object.assign(b, { dead: 1, respawnAt: Date.now() + CONFIG.respawnMs });
+  Object.assign(b, { dead: 1, lives: b.lives - 1, respawnAt: Date.now() + CONFIG.respawnMs });
   const msg = { v: b.id, by: by || "", why };
   net.send("down", msg); onDown(msg);
 }
@@ -342,7 +344,10 @@ function incoming(s, rocks) {
 }
 /** One bot's brain: dodge, pick a target, lead it, shoot when lined up, thrust to keep a fighting distance. */
 function stepBot(b, dt, t, ships, rocks) {
-  if (b.dead) { if (t >= b.respawnAt) placeShip(b); return; }
+  if (b.dead) {
+    if (t >= b.respawnAt) { if (b.lives <= 0) Object.assign(b, { score: 0, lives: CONFIG.lives }); placeShip(b); } // out of ships: a new run
+    return;
+  }
   if (t > b.thinkAt) {
     b.thinkAt = t + 400;
     let foe = null, fd = CONFIG.botRange;
@@ -385,7 +390,7 @@ function hostTick(dt, now) {
   if (now - world.lastBots > 100) { // ~10/s, one message for every bot, and their shots
     world.lastBots = now;
     net.setShared("bots", JSON.stringify([...world.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: Math.round(b.x), y: Math.round(b.y), vx: Math.round(b.vx), vy: Math.round(b.vy),
-      a: +b.a.toFixed(2), t: b.t, d: b.dead, sh: t < b.shieldUntil ? 1 : 0, sc: b.score }))));
+      a: +b.a.toFixed(2), t: b.t, d: b.dead, sh: t < b.shieldUntil ? 1 : 0, sc: b.score, l: b.lives }))));
     if (world.shots.length) { net.send("shots", { list: world.shots.splice(0, 40) }); world.shots.length = 0; }
   }
   if (now - world.lastRocks > (world.dirty ? 150 : 400)) { // at once when rocks split or arrive, else a few times a second to keep everyone in step
@@ -656,7 +661,9 @@ function hud(now) {
   $("score").innerHTML = `${String(me.score).padStart(5, "0")}<small>${"<i></i>".repeat(Math.max(0, me.lives))}</small>`;
   $("score").style.color = me.color;
   const rows = allShips().filter((s) => !s.dead || s === me).map((s) => ({ name: s === me ? "You" : s.name, color: s.color, sc: s.score, mine: s === me })).sort((a, b) => b.sc - a.sc);
-  $("top").innerHTML = rows.slice(0, 5).map((r) => `<div class="${r.mine ? "me" : ""}"><i style="background:${r.color};color:${r.color}"></i><span>${esc(r.name)}</span><b>${r.sc}</b></div>`).join("");
+  const shown = rows.slice(0, 5), mine = rows.find((r) => r.mine);
+  if (mine && !shown.includes(mine)) shown[4] = mine; // your own row always shows
+  $("top").innerHTML = shown.map((r) => `<div class="${r.mine ? "me" : ""}"><i style="background:${r.color};color:${r.color}"></i><span>${esc(r.name)}</span><b>${r.sc}</b></div>`).join("");
   $("feed").innerHTML = feed.filter((f) => now - f.at < 6000).map((f) => `<div style="color:${f.color}">${esc(f.text)}</div>`).join("");
   const t = Date.now();
   $("msg").innerHTML = me.dead && !me.over ? `${me.killer ? `Downed by ${esc(me.killer)}` : "Crashed!"}<small>Next ship in ${Math.max(0, Math.ceil((me.respawnAt - t) / 1000))}</small>` : now < toastUntil ? esc(toastText) : "";
@@ -669,11 +676,11 @@ function showOver() {
   $("overScore").textContent = `Score ${me.score} · ${me.downs} ship${me.downs === 1 ? "" : "s"} downed`;
   $("over").hidden = false;
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading the leaderboard…</li>";
+  if (!board) { list.innerHTML = '<li class="note">Leaderboards need a connection.</li>'; return; }
+  list.innerHTML = '<li class="note">Loading the leaderboard…</li>';
   board.submit(me.score).catch(() => null).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No scores yet. You're first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : `<li class="note">No scores yet. You're first.</li>`;
+  }).catch(() => { list.innerHTML = `<li class="note">Couldn't load the leaderboard.</li>`; });
 }
 $("again").onclick = () => newRun();
 
